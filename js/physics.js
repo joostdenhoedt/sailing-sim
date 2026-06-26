@@ -10,18 +10,21 @@ const PHYSICS = {
   // No-go half-angle: zero drive within this of the wind direction
   NO_GO_HALF_ANGLE: 40 * DEG,
 
-  // Drag (quadratic). Terminal speed ≈ sqrt(MAX_DRIVE / DRAG)
-  DRAG: 0.016,
+  // Drag (quadratic). Terminal speed ≈ sqrt(MAX_DRIVE / DRAG).
+  // High drag caps top speed without killing initial acceleration feel.
+  DRAG: 0.055,
 
-  // Peak drive force (at ~90° TWA = beam reach, best trim)
-  MAX_DRIVE: 0.32,
+  // Peak drive force (at ~90° TWA = beam reach, best trim).
+  // Terminal speed ≈ sqrt(0.35/0.055) ≈ 2.5 units/s = ~125 px/s.
+  MAX_DRIVE: 0.35,
 
-  // Turning rate radians/s at full rudder (scales with a speed factor)
-  TURN_RATE: 1.2,
+  // Turning rate radians/s at full rudder — fast dinghy tiller feel.
+  // 90° tack in ~1 second; full 180° gybe in ~2 seconds.
+  TURN_RATE: 3.0,
 
   // Tack penalty
-  TACK_SPEED_FACTOR: 0.38,
-  TACK_PENALTY_DURATION: 2.8,
+  TACK_SPEED_FACTOR: 0.40,
+  TACK_PENALTY_DURATION: 2.5,
 
   // Cosmetic leeway: tiny sideways slip when beating
   LEEWAY_COEFF: 0.05,
@@ -29,7 +32,7 @@ const PHYSICS = {
   MASS: 1.0,
 
   // Canvas pixels per speed-unit per second (keeps movement frame-rate independent)
-  PIXELS_PER_UNIT: 65,
+  PIXELS_PER_UNIT: 50,
 };
 
 // Wind FROM 90° (top of canvas). Blows toward 270° (downward on screen).
@@ -103,9 +106,9 @@ export function step(state, controls, dt) {
   s.x +=  s.vx * dt * PHYSICS.PIXELS_PER_UNIT;
   s.y -= s.vy * dt * PHYSICS.PIXELS_PER_UNIT;  // canvas y inverted
 
-  // Steering: small minimum effect at zero speed so the player isn't stranded
-  const steerEffect = 0.25 + 0.75 * Math.min(s.speed / 2.0, 1.0);
-  s.heading += s.rudder * PHYSICS.TURN_RATE * steerEffect * dt;
+  // Steering: full turn rate always — dinghy tiller, not a ship wheel.
+  // (Real rudders need water flow, but for game feel we skip speed scaling.)
+  s.heading += s.rudder * PHYSICS.TURN_RATE * dt;
   s.heading = ((s.heading % TWO_PI) + TWO_PI) % TWO_PI;
 
   return s;
