@@ -1,0 +1,16 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0a1a2e;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  font-family: monospace;
+}
+
+canvas {
+  display: block;
+  border: 2px solid #2a4a6e;
+  image-rendering: pixelated;
+}

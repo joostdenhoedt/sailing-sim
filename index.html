@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sailing Sim</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="game" width="800" height="750"></canvas>
+
+  <script type="module">
+    import { getInitialState, step } from './js/physics.js';
+    import { createControls } from './js/controls.js';
+    import { createRenderer } from './js/renderer.js';
+    import { createRaceState, updateRace } from './js/game.js';
+
+    const canvas   = document.getElementById('game');
+    const renderer = createRenderer(canvas);
+    const controls = createControls();
+
+    let boatState = getInitialState();
+    let raceState = createRaceState();
+    let lastTime  = null;
+
+    function loop(timestamp) {
+      if (!lastTime) lastTime = timestamp;
+      const dt = Math.min((timestamp - lastTime) / 1000, 0.05); // cap at 50ms
+      lastTime = timestamp;
+
+      const ctrl = controls.sample(dt);
+      boatState  = step(boatState, ctrl, dt);
+      raceState  = updateRace(raceState, boatState, dt);
+
+      renderer.draw(boatState, raceState);
+      requestAnimationFrame(loop);
+    }
+
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
