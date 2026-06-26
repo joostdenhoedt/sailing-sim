@@ -1,112 +1,97 @@
 // Sailing physics — pure JS, no DOM, no canvas.
-// Coordinate system: x = right, y = up (screen y is inverted in renderer).
-// Wind blows FROM the top of the screen, so true wind direction = 270° (blowing "south" = downward).
-// Angles: 0° = right, 90° = up, measured counter-clockwise. Boat heading 90° = pointing upwind.
+// Coordinate system: x = right, y = up (math). Canvas y is inverted in renderer.
+// Wind comes FROM the top of the canvas (TRUE_WIND_DIR = 90°, blows downward).
+// Boat heading 90° = bow pointing straight into the wind (the no-go zone).
 
 const TWO_PI = Math.PI * 2;
-
-// --- constants (tune these for feel) ---
-const DEGREES = Math.PI / 180;
+const DEG = Math.PI / 180;
 
 const PHYSICS = {
-  // No-go zone: boat cannot point within this many degrees of true wind
-  NO_GO_HALF_ANGLE: 42 * DEGREES,   // ±42° from wind = 84° no-go zone
+  // No-go half-angle: zero drive within this of the wind direction
+  NO_GO_HALF_ANGLE: 40 * DEG,
 
-  // Peak drive angle: TWA where drive is maximum (close-hauled optimal)
-  PEAK_TWA: 45 * DEGREES,
+  // Drag (quadratic). Terminal speed ≈ sqrt(MAX_DRIVE / DRAG)
+  DRAG: 0.016,
 
-  // Drag coefficient
-  DRAG: 0.018,
+  // Peak drive force (at ~90° TWA = beam reach, best trim)
+  MAX_DRIVE: 0.32,
 
-  // Max sail drive force (tuned so terminal speed feels satisfying)
-  MAX_DRIVE: 0.28,
+  // Turning rate radians/s at full rudder (scales with a speed factor)
+  TURN_RATE: 1.2,
 
-  // Boat turning rate (radians per second per unit rudder at speed 1)
-  TURN_RATE: 1.1,
+  // Tack penalty
+  TACK_SPEED_FACTOR: 0.38,
+  TACK_PENALTY_DURATION: 2.8,
 
-  // Minimum speed before rudder has meaningful effect
-  MIN_STEER_SPEED: 0.3,
+  // Cosmetic leeway: tiny sideways slip when beating
+  LEEWAY_COEFF: 0.05,
 
-  // Speed at which tack penalty kicks in (crossing through the wind)
-  TACK_SPEED_FACTOR: 0.35,   // speed reduced to this fraction on tack
-  TACK_PENALTY_DURATION: 2.8, // seconds of reduced drive after a tack
-
-  // Leeway: sideways slip coefficient (fraction of forward speed)
-  LEEWAY_COEFF: 0.06,
-
-  // Mass (affects acceleration feel)
   MASS: 1.0,
+
+  // Canvas pixels per speed-unit per second (keeps movement frame-rate independent)
+  PIXELS_PER_UNIT: 65,
 };
 
-// True wind blows FROM this direction (in our coordinate system).
-// 90° = wind coming from "top" (upward on screen), boat must beat upwind.
-const TRUE_WIND_DIR = 90 * DEGREES; // wind FROM 90° → blows toward 270°
-const TRUE_WIND_SPEED = 1.0;        // normalised; all speeds relative to this
+// Wind FROM 90° (top of canvas). Blows toward 270° (downward on screen).
+const TRUE_WIND_DIR = 90 * DEG;
 
 export function getInitialState() {
   return {
-    x: 400,          // pixels, centre of canvas
-    y: 650,          // near bottom of canvas
+    x: 400,
+    y: 700,             // below start line — gives a few seconds to reach it
     vx: 0,
     vy: 0,
-    heading: 90 * DEGREES,  // pointing straight upwind to start
+    // 40° heading → ~50° TWA → starboard tack, solidly outside no-go, driving immediately
+    heading: 40 * DEG,
     speed: 0,
-    sheetPct: 0.7,   // mainsheet 0=fully eased, 1=fully sheeted
-    rudder: 0,       // -1=full port, 0=centre, +1=full starboard
+    sheetPct: 0.80,     // reasonable default for close-hauled
+    rudder: 0,
     tackPenaltyTimer: 0,
-    lastTWA: null,   // used to detect tack (sign change of TWA)
+    lastTWA: null,
     tacking: false,
   };
 }
 
-// Pure step function — takes state + controls, returns new state.
-// dt in seconds. controls = { rudder: -1..1, sheetDelta: number }
+// Pure step function — no side effects, no DOM.
+// controls = { rudder: -1..1, sheetDelta: number (fraction/s) }
 export function step(state, controls, dt) {
   const s = { ...state };
 
-  // --- Apply controls ---
-  s.rudder = Math.max(-1, Math.min(1, controls.rudder));
-  s.sheetPct = Math.max(0, Math.min(1, s.sheetPct + (controls.sheetDelta || 0) * dt));
+  // Apply controls
+  s.rudder   = Math.max(-1, Math.min(1, controls.rudder  ?? 0));
+  s.sheetPct = Math.max(0,  Math.min(1, s.sheetPct + (controls.sheetDelta ?? 0) * dt));
 
-  // --- True Wind Angle (TWA) ---
-  // Wind blows FROM TRUE_WIND_DIR. Wind vector direction = TRUE_WIND_DIR + π.
-  const twa = signedTWA(s.heading);
+  // True Wind Angle: + = starboard tack, - = port tack
+  const twa    = signedTWA(s.heading);
+  const absTWA = Math.abs(twa);
 
-  // --- Tack detection (sign change of TWA) ---
-  if (s.lastTWA !== null && Math.sign(twa) !== Math.sign(s.lastTWA) && s.lastTWA !== 0) {
+  // Tack detection (sign flip of TWA)
+  if (s.lastTWA !== null && s.lastTWA !== 0 && Math.sign(twa) !== Math.sign(s.lastTWA)) {
     s.speed *= PHYSICS.TACK_SPEED_FACTOR;
     s.tackPenaltyTimer = PHYSICS.TACK_PENALTY_DURATION;
     s.tacking = true;
-  } else if (s.tackPenaltyTimer <= 0) {
-    s.tacking = false;
   }
+  if (s.tackPenaltyTimer <= 0) s.tacking = false;
   s.lastTWA = twa;
   s.tackPenaltyTimer = Math.max(0, s.tackPenaltyTimer - dt);
 
-  // --- Drive force ---
-  const absTWA = Math.abs(twa);
+  // Drive force
   let drive = 0;
-
   if (absTWA > PHYSICS.NO_GO_HALF_ANGLE) {
-    // Sail drive curve: peak at PEAK_TWA, falls off toward beam/run and toward no-go
     drive = driveFromTWA(absTWA, s.sheetPct);
     if (s.tackPenaltyTimer > 0) {
-      // Ramp drive back in over the penalty window
-      const ramp = 1 - (s.tackPenaltyTimer / PHYSICS.TACK_PENALTY_DURATION);
+      // Ramp drive back in quadratically after a tack
+      const ramp = 1 - s.tackPenaltyTimer / PHYSICS.TACK_PENALTY_DURATION;
       drive *= ramp * ramp;
     }
   }
 
-  // --- Drag ---
+  // Speed update (drag is quadratic)
   const drag = PHYSICS.DRAG * s.speed * s.speed;
+  s.speed = Math.max(0, s.speed + ((drive - drag) / PHYSICS.MASS) * dt);
 
-  // --- Acceleration along heading ---
-  const netForce = (drive - drag) / PHYSICS.MASS;
-  s.speed = Math.max(0, s.speed + netForce * dt);
-
-  // --- Leeway (sideways slip, away from wind, only when beating) ---
-  // Positive leeway when on starboard tack (twa > 0), negative on port.
-  const leewayAngle = (absTWA < 100 * DEGREES)
+  // Leeway: small lateral slip only when close-hauled
+  const leewayAngle = (absTWA < 100 * DEG)
     ? Math.sign(twa) * PHYSICS.LEEWAY_COEFF * s.speed
     : 0;
 
@@ -114,55 +99,68 @@ export function step(state, controls, dt) {
   s.vx = Math.cos(moveAngle) * s.speed;
   s.vy = Math.sin(moveAngle) * s.speed;
 
-  s.x += s.vx * dt * 60; // scale to pixel-friendly units
-  s.y -= s.vy * dt * 60; // canvas y is inverted
+  // Position (frame-rate independent)
+  s.x +=  s.vx * dt * PHYSICS.PIXELS_PER_UNIT;
+  s.y -= s.vy * dt * PHYSICS.PIXELS_PER_UNIT;  // canvas y inverted
 
-  // --- Steering ---
-  const steerEffect = Math.min(s.speed / PHYSICS.MIN_STEER_SPEED, 1);
+  // Steering: small minimum effect at zero speed so the player isn't stranded
+  const steerEffect = 0.25 + 0.75 * Math.min(s.speed / 2.0, 1.0);
   s.heading += s.rudder * PHYSICS.TURN_RATE * steerEffect * dt;
   s.heading = ((s.heading % TWO_PI) + TWO_PI) % TWO_PI;
 
   return s;
 }
 
-// Signed TWA: positive = starboard tack, negative = port tack.
-// Returns value in (-π, π).
+// Signed TWA. Range (-π, π). Positive = starboard tack.
 function signedTWA(heading) {
-  // Wind comes FROM TRUE_WIND_DIR. Relative to boat heading:
   let twa = TRUE_WIND_DIR - heading;
-  // Normalise to (-π, π)
-  while (twa > Math.PI) twa -= TWO_PI;
+  while (twa >  Math.PI) twa -= TWO_PI;
   while (twa < -Math.PI) twa += TWO_PI;
   return twa;
 }
 
-// Drive force as a function of absolute TWA and sheet trim.
-// Shape: zero at NO_GO_HALF_ANGLE, peak near PEAK_TWA, gradual decay to run.
+// Drive force as a function of TWA and sheet trim.
+//
+// Drive peaks at ~90° TWA (beam reach). This creates a real VMG tradeoff:
+//   - Close-hauled (~45° TWA): slow speed but good angle → moderate VMG
+//   - Beam reach (90° TWA):    fast speed but perpendicular → zero VMG upwind
+//   - Optimal VMG groove:      ~50–60° TWA (player has to find it)
+//
 function driveFromTWA(absTWA, sheetPct) {
-  const ng = PHYSICS.NO_GO_HALF_ANGLE;
-  const pk = PHYSICS.PEAK_TWA;
+  const ng   = PHYSICS.NO_GO_HALF_ANGLE;  // 40° — no-go edge
+  const beam = Math.PI / 2;               // 90° — peak drive
 
   let rawDrive;
-  if (absTWA <= pk) {
-    // Ramp up from no-go edge to peak
-    const t = (absTWA - ng) / (pk - ng);
-    rawDrive = t * t;
+  if (absTWA <= beam) {
+    // Quarter-sine ramp: 0 at no-go edge, 1.0 at beam reach
+    const t = (absTWA - ng) / (beam - ng);
+    rawDrive = Math.sin(t * Math.PI / 2);
   } else {
-    // Decay from peak toward run (broad reach / dead run reduce drive in this model)
-    const t = (absTWA - pk) / (Math.PI - pk);
-    rawDrive = 1 - 0.55 * t; // partial drive even on a run
+    // Gentle decay from beam reach to dead run
+    const t = (absTWA - beam) / (Math.PI - beam);
+    rawDrive = 1.0 - 0.4 * t;
   }
 
-  // Sheet trim efficiency: optimal trim varies by point of sail.
-  // Simplified: close-hauled wants ~0.85 sheet, reaching wants ~0.6.
-  const optimalSheet = 0.85 - 0.35 * ((absTWA - ng) / (Math.PI - ng));
-  const trimError = Math.abs(sheetPct - optimalSheet);
-  const trimEfficiency = Math.max(0.2, 1 - 2.5 * trimError * trimError);
+  // Optimal sheet: tight close-hauled (0.90), eased reaching/running (→0.25)
+  const optimalSheet = Math.max(0.15, 0.90 - 0.65 * ((absTWA - ng) / (Math.PI - ng)));
+  const trimError    = Math.abs(sheetPct - optimalSheet);
+  const trimEfficiency = Math.max(0.15, 1.0 - 3.0 * trimError * trimError);
 
   return PHYSICS.MAX_DRIVE * rawDrive * trimEfficiency;
 }
 
-// --- Observation vector for RL (flat numeric array) ---
+// For trim feedback on the HUD
+export function getTrimStatus(state) {
+  const absTWA = Math.abs(signedTWA(state.heading));
+  const ng = PHYSICS.NO_GO_HALF_ANGLE;
+  const optimalSheet = Math.max(0.15, 0.90 - 0.65 * ((absTWA - ng) / (Math.PI - ng)));
+  const diff = state.sheetPct - optimalSheet;
+  if (diff >  0.12) return 'OVERSHEET';
+  if (diff < -0.12) return 'EASE SAIL';
+  return 'TRIM OK';
+}
+
+// Flat observation vector for RL
 export function getObservation(state, raceState) {
   const twa = signedTWA(state.heading);
   return [
@@ -174,10 +172,9 @@ export function getObservation(state, raceState) {
     state.speed / 5,
     state.sheetPct,
     state.tackPenaltyTimer / PHYSICS.TACK_PENALTY_DURATION,
-    raceState?.timeToStart ?? 0,
+    raceState?.timeToStart  ?? 0,
     raceState?.distToFinish ?? 0,
   ];
 }
 
-// Exported for renderer/HUD
-export { signedTWA, TRUE_WIND_DIR, TRUE_WIND_SPEED, PHYSICS };
+export { signedTWA, TRUE_WIND_DIR, PHYSICS };

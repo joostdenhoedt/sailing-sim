@@ -3,14 +3,14 @@
 const CANVAS_W = 800;
 const CANVAS_H = 750;
 
-const START_Y   = 620;   // y-pixel of start line
-const FINISH_Y  = 100;   // y-pixel of finish line
+const START_Y   = 650;   // y-pixel of start line (boat starts at 700, ~50px gap)
+const FINISH_Y  = 80;    // y-pixel of finish line
 const LINE_HALF = 150;   // half-width of both lines
 
 export function createRaceState() {
   return {
     phase: 'pre-start',   // 'pre-start' | 'early-start' | 'racing' | 'finished'
-    timeToStart: 60,      // countdown seconds
+    timeToStart: 10,      // countdown seconds
     raceTime: 0,
     startLeft:   { x: CANVAS_W / 2 - LINE_HALF, y: START_Y },
     startRight:  { x: CANVAS_W / 2 + LINE_HALF, y: START_Y },

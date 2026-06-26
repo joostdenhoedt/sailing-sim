@@ -1,6 +1,6 @@
-import { signedTWA, TRUE_WIND_DIR, PHYSICS } from './physics.js';
+import { signedTWA, TRUE_WIND_DIR, PHYSICS, getTrimStatus } from './physics.js';
 
-const DEGREES = Math.PI / 180;
+const DEG = Math.PI / 180;
 
 export function createRenderer(canvas) {
   const ctx = canvas.getContext('2d');
@@ -8,12 +8,11 @@ export function createRenderer(canvas) {
   const H = canvas.height;
 
   function draw(state, raceState) {
-    // Background
     ctx.fillStyle = '#1a3a5c';
     ctx.fillRect(0, 0, W, H);
-
-    drawWaterTexture(ctx, W, H);
-    drawCourse(ctx, raceState);
+    drawWater(ctx, W, H);
+    drawWindStreaks(ctx, W);
+    drawCourse(ctx, raceState, W, H);
     drawBoat(ctx, state);
     drawHUD(ctx, state, raceState, W, H);
   }
@@ -21,22 +20,35 @@ export function createRenderer(canvas) {
   return { draw };
 }
 
-function drawWaterTexture(ctx, W, H) {
-  // Subtle grid of wave lines
+function drawWater(ctx, W, H) {
   ctx.strokeStyle = 'rgba(255,255,255,0.04)';
   ctx.lineWidth = 1;
-  for (let y = 0; y < H; y += 40) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(W, y);
-    ctx.stroke();
+  for (let y = 0; y < H; y += 45) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
   }
 }
 
-function drawCourse(ctx, rs) {
+// Small downward arrows along top edge to show wind direction unambiguously
+function drawWindStreaks(ctx, W) {
+  ctx.fillStyle = 'rgba(170,210,255,0.18)';
+  for (let x = 60; x < W - 40; x += 90) {
+    drawMiniArrow(ctx, x, 18);
+  }
+}
+
+function drawMiniArrow(ctx, x, y) {
+  ctx.beginPath();
+  ctx.moveTo(x, y); ctx.lineTo(x, y + 14);
+  ctx.moveTo(x - 4, y + 8); ctx.lineTo(x, y + 14); ctx.lineTo(x + 4, y + 8);
+  ctx.strokeStyle = 'rgba(170,210,255,0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function drawCourse(ctx, rs, W, H) {
   if (!rs) return;
 
-  // Start line between two buoys
+  // Start line
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 2;
   ctx.setLineDash([6, 4]);
@@ -45,8 +57,6 @@ function drawCourse(ctx, rs) {
   ctx.lineTo(rs.startRight.x, rs.startRight.y);
   ctx.stroke();
   ctx.setLineDash([]);
-
-  // Start buoys
   drawBuoy(ctx, rs.startLeft,  '#ff4444');
   drawBuoy(ctx, rs.startRight, '#ff4444');
 
@@ -59,36 +69,40 @@ function drawCourse(ctx, rs) {
   ctx.lineTo(rs.finishRight.x, rs.finishRight.y);
   ctx.stroke();
   ctx.setLineDash([]);
-
-  // Finish buoys
   drawBuoy(ctx, rs.finishLeft,  '#ffcc00');
   drawBuoy(ctx, rs.finishRight, '#ffcc00');
 
-  // Chequered flag at top centre
-  drawChequeredFlag(ctx, (rs.finishLeft.x + rs.finishRight.x) / 2 - 20, rs.finishLeft.y - 40);
+  const flagX = (rs.finishLeft.x + rs.finishRight.x) / 2 - 20;
+  drawChequeredFlag(ctx, flagX, rs.finishLeft.y - 36);
 
-  // Countdown or race status
+  // Race status text
+  drawRaceStatus(ctx, rs, W);
+}
+
+function drawRaceStatus(ctx, rs, W) {
+  ctx.textAlign = 'center';
   if (rs.phase === 'pre-start') {
     const t = Math.ceil(rs.timeToStart);
-    ctx.fillStyle = t <= 5 ? '#ff4444' : '#ffffff';
-    ctx.font = 'bold 32px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(`START IN ${t}s`, 400, rs.startLeft.y + 35);
+    ctx.fillStyle = t <= 3 ? '#ff4444' : '#ffffff';
+    ctx.font = 'bold 28px monospace';
+    ctx.fillText(
+      rs.timeToStart <= 0 ? 'GO! — CROSS THE LINE' : `START IN  ${t}s`,
+      W / 2, rs.startLeft.y + 36
+    );
   } else if (rs.phase === 'early-start') {
     ctx.fillStyle = '#ff2200';
-    ctx.font = 'bold 24px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('OCS — RETURN!', 400, rs.startLeft.y + 35);
+    ctx.font = 'bold 22px monospace';
+    ctx.fillText('OCS — RETURN TO START!', W / 2, rs.startLeft.y + 36);
   } else if (rs.phase === 'racing') {
     ctx.fillStyle = '#aaffaa';
-    ctx.font = '18px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(`RACE TIME  ${formatTime(rs.raceTime)}`, 400, rs.startLeft.y + 35);
+    ctx.font = '16px monospace';
+    ctx.fillText(`RACE TIME  ${formatTime(rs.raceTime)}`, W / 2, rs.startLeft.y + 36);
   } else if (rs.phase === 'finished') {
     ctx.fillStyle = '#ffff00';
-    ctx.font = 'bold 28px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(`FINISHED!  ${formatTime(rs.raceTime)}`, 400, H / 2);
+    ctx.font = 'bold 32px monospace';
+    ctx.fillText(`FINISHED!`, W / 2, 380);
+    ctx.font = '22px monospace';
+    ctx.fillText(formatTime(rs.raceTime), W / 2, 420);
   }
 }
 
@@ -97,152 +111,124 @@ function drawBuoy(ctx, pos, color) {
   ctx.arc(pos.x, pos.y, 8, 0, Math.PI * 2);
   ctx.fillStyle = color;
   ctx.fill();
-  ctx.strokeStyle = '#ffffff';
+  ctx.strokeStyle = '#fff';
   ctx.lineWidth = 1.5;
   ctx.stroke();
 }
 
 function drawChequeredFlag(ctx, x, y) {
-  const size = 8;
-  const cols = 5, rows = 3;
-  for (let r = 0; r < rows; r++) {
+  const s = 8, cols = 5, rows = 3;
+  for (let r = 0; r < rows; r++)
     for (let c = 0; c < cols; c++) {
-      ctx.fillStyle = (r + c) % 2 === 0 ? '#ffffff' : '#000000';
-      ctx.fillRect(x + c * size, y + r * size, size, size);
+      ctx.fillStyle = (r + c) % 2 === 0 ? '#fff' : '#000';
+      ctx.fillRect(x + c * s, y + r * s, s, s);
     }
-  }
 }
 
 function drawBoat(ctx, state) {
   ctx.save();
   ctx.translate(state.x, state.y);
-  // Canvas y is inverted; heading 90° should point up
+  // Heading 90° = up in math coords. Canvas rotation: subtract from π/2 for correct orientation.
   ctx.rotate(-state.heading + Math.PI / 2);
 
-  const twa = signedTWA(state.heading);
+  const twa   = signedTWA(state.heading);
   const inNoGo = Math.abs(twa) < PHYSICS.NO_GO_HALF_ANGLE;
 
-  // Hull — small triangle
+  // Hull
   ctx.beginPath();
-  ctx.moveTo(0, -14);   // bow
-  ctx.lineTo(-6, 8);    // port stern
-  ctx.lineTo(6, 8);     // starboard stern
+  ctx.moveTo(0, -15);   // bow
+  ctx.lineTo(-6, 9);
+  ctx.lineTo(6, 9);
   ctx.closePath();
-  ctx.fillStyle = inNoGo ? '#ff8844' : '#e8e8e8';
-  ctx.fill();
-  ctx.strokeStyle = '#222';
+  ctx.fillStyle   = inNoGo ? '#cc5533' : '#ddeeff';
+  ctx.strokeStyle = '#223344';
   ctx.lineWidth = 1;
+  ctx.fill();
   ctx.stroke();
 
-  // Mast dot
+  // Mast
   ctx.beginPath();
-  ctx.arc(0, -4, 2, 0, Math.PI * 2);
-  ctx.fillStyle = '#555';
+  ctx.arc(0, -3, 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = '#445';
   ctx.fill();
 
-  // Boom/sail — line showing sail angle
+  // Boom + sail — amber/orange so it reads clearly against the water
   const sailAngle = getSailAngle(twa, state.sheetPct);
   ctx.save();
   ctx.rotate(sailAngle);
-  ctx.strokeStyle = inNoGo ? '#ff884488' : '#ffffffcc';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = inNoGo ? 'rgba(255,140,40,0.4)' : '#f4a030';
   ctx.beginPath();
-  ctx.moveTo(0, -4);
-  ctx.lineTo(0, 10);
+  ctx.moveTo(0, -3);   // mast pivot
+  ctx.lineTo(0, 12);   // boom end
   ctx.stroke();
+  // Small triangle fill for the sail body
+  ctx.beginPath();
+  ctx.moveTo(0, -3);
+  ctx.lineTo(0, 12);
+  ctx.lineTo(sailAngle > 0 ? 5 : -5, 2);
+  ctx.closePath();
+  ctx.fillStyle = inNoGo ? 'rgba(255,140,40,0.15)' : 'rgba(244,160,48,0.35)';
+  ctx.fill();
   ctx.restore();
 
   ctx.restore();
 }
 
-// Returns the boom angle relative to boat centreline (visual only)
+// Boom angle relative to boat centreline.
+// On stbd tack (twa>0): boom goes port (negative angle). Port tack: opposite.
+// Fully sheeted → boom near centre; fully eased → boom well out.
 function getSailAngle(twa, sheetPct) {
-  // On starboard tack (twa > 0): boom goes to port (-ve angle)
-  // On port tack (twa < 0): boom goes to starboard (+ve angle)
   const side = twa >= 0 ? -1 : 1;
-  // Sheet pulls boom toward centreline; ease pushes it out
-  const maxAngle = 0.9; // radians (~52°)
-  return side * maxAngle * (1 - sheetPct * 0.7);
+  const maxAngle = 1.25; // radians (~72°) fully eased
+  return side * maxAngle * (1.0 - sheetPct * 0.75);
 }
 
 function drawHUD(ctx, state, rs, W, H) {
-  const twa = signedTWA(state.heading);
-  const twaDeg = (twa / Math.PI * 180).toFixed(0);
+  const twa    = signedTWA(state.heading);
+  const twaDeg = (twa / (Math.PI / 180)).toFixed(0);
   const inNoGo = Math.abs(twa) < PHYSICS.NO_GO_HALF_ANGLE;
-  const vmg = computeVMG(state);
+  const vmg    = state.speed * Math.cos(Math.abs(twa));
+  const trim   = getTrimStatus(state);
 
-  // Wind arrow (top-right)
-  drawWindArrow(ctx, W - 60, 60);
+  // Wind label top-right
+  ctx.fillStyle = 'rgba(170,210,255,0.85)';
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText('WIND ↓ (from top)', W - 12, 30);
 
-  // Info panel (top-left)
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(8, 8, 190, 120);
+  // Info panel top-left
+  ctx.fillStyle = 'rgba(0,0,0,0.60)';
+  ctx.fillRect(8, 8, 200, 140);
 
-  ctx.font = '13px monospace';
   ctx.textAlign = 'left';
+  ctx.font = '13px monospace';
+
+  const trimColor = trim === 'TRIM OK' ? '#aaffaa' : '#ffcc44';
 
   const lines = [
-    `SPD  ${state.speed.toFixed(2)}`,
-    `VMG  ${vmg.toFixed(2)}`,
-    `TWA  ${twaDeg}°  ${tack(twa)}`,
-    `SAIL ${(state.sheetPct * 100).toFixed(0)}%`,
-    inNoGo ? '⚠ NO-GO ZONE' : (state.tacking ? '↻ TACKING...' : ''),
+    { text: `SPD  ${state.speed.toFixed(2)}`,           color: '#ccffcc' },
+    { text: `VMG  ${vmg.toFixed(2)}`,                   color: '#aaffcc' },
+    { text: `TWA  ${twaDeg}°  (${twa >= 0 ? 'STBD' : 'PORT'})`, color: '#ccffcc' },
+    { text: `SAIL ${(state.sheetPct * 100).toFixed(0)}%  ${trim}`, color: trimColor },
+    { text: inNoGo ? '⚠ NO-GO ZONE'
+           : state.tacking ? '↻ TACKING...' : '',
+      color: inNoGo ? '#ff7744' : '#ffcc44' },
   ];
 
-  lines.forEach((line, i) => {
-    ctx.fillStyle = (i === 4 && inNoGo) ? '#ff8844' : '#ccffcc';
-    ctx.fillText(line, 14, 28 + i * 18);
+  lines.forEach((l, i) => {
+    if (!l.text) return;
+    ctx.fillStyle = l.color;
+    ctx.fillText(l.text, 14, 30 + i * 20);
   });
 
-  // Controls reminder (bottom)
-  ctx.fillStyle = 'rgba(0,0,0,0.4)';
-  ctx.fillRect(0, H - 26, W, 26);
-  ctx.fillStyle = '#888';
+  // Controls bar at bottom
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, H - 28, W, 28);
+  ctx.fillStyle = '#778899';
   ctx.font = '11px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('A/D — steer   ↑/↓ — sheet in/out', W / 2, H - 9);
-}
-
-function drawWindArrow(ctx, cx, cy) {
-  ctx.save();
-  ctx.translate(cx, cy);
-  // Wind comes FROM top → arrow points downward (direction it blows toward)
-  ctx.rotate(Math.PI); // pointing down = wind blowing downward = from top
-
-  ctx.strokeStyle = '#aaddff';
-  ctx.fillStyle = '#aaddff';
-  ctx.lineWidth = 2;
-
-  // Shaft
-  ctx.beginPath();
-  ctx.moveTo(0, -22);
-  ctx.lineTo(0, 14);
-  ctx.stroke();
-
-  // Arrowhead
-  ctx.beginPath();
-  ctx.moveTo(0, 22);
-  ctx.lineTo(-7, 10);
-  ctx.lineTo(7, 10);
-  ctx.closePath();
-  ctx.fill();
-
-  ctx.restore();
-
-  ctx.fillStyle = '#aaddff';
-  ctx.font = '11px monospace';
-  ctx.textAlign = 'center';
-  ctx.fillText('WIND', cx, cy + 42);
-}
-
-function computeVMG(state) {
-  // VMG upwind = speed * cos(|TWA|)
-  const twa = signedTWA(state.heading);
-  return state.speed * Math.cos(Math.abs(twa));
-}
-
-function tack(twa) {
-  return twa >= 0 ? 'STBD' : 'PORT';
+  ctx.fillText('A / D — steer left / right     ↑ / ↓ — sheet in / ease', W / 2, H - 10);
 }
 
 function formatTime(seconds) {
