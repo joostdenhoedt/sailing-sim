@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Sailing RL — Episode Replay</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0a1a2e; color: #cce; font-family: monospace;
+           display: flex; flex-direction: column; align-items: center;
+           padding: 20px; gap: 12px; }
+    h2   { color: #aaccff; font-size: 15px; }
+    #info { font-size: 13px; color: #88aacc; min-height: 20px; }
+    canvas { border: 2px solid #2a4a6e; }
+    #status { font-size: 11px; color: #556677; }
+  </style>
+</head>
+<body>
+  <h2>Sailing RL — Agent Episode Replay</h2>
+  <div id="info">Loading latest episode…</div>
+  <canvas id="c" width="800" height="750"></canvas>
+  <div id="status">Reloads automatically every 10 s</div>
+
+  <script>
+    const canvas  = document.getElementById('c');
+    const ctx     = canvas.getContext('2d');
+    const infoEl  = document.getElementById('info');
+
+    let data      = null;
+    let frameIdx  = 0;
+    let animId    = null;
+    const SKIP    = 2;   // draw every Nth point per animation frame for speed
+
+    // ── load + replay ────────────────────────────────────────────────────────
+
+    async function loadAndPlay() {
+      try {
+        const res = await fetch('./latest_episode.json?t=' + Date.now());
+        if (!res.ok) { infoEl.textContent = 'No episode file yet — start training first.'; return; }
+        data     = await res.json();
+        frameIdx = 0;
+        infoEl.textContent =
+          `Episode ${data.episode} | Reward: ${data.total_reward.toFixed(1)} | ` +
+          `Steps: ${data.steps} | Finished: ${data.finished ? '✓ YES' : '✗ NO'}`;
+        if (animId) cancelAnimationFrame(animId);
+        animate();
+      } catch(e) {
+        infoEl.textContent = 'Waiting for training to start…';
+      }
+    }
+
+    function animate() {
+      if (!data) return;
+      if (frameIdx >= data.trajectory.length) {
+        // Episode done — pause 2 s then reload
+        setTimeout(loadAndPlay, 2000);
+        return;
+      }
+      drawFrame(data.trajectory, frameIdx);
+      frameIdx += SKIP;
+      animId = requestAnimationFrame(animate);
+    }
+
+    // Auto-reload every 10 seconds to show latest episode
+    setInterval(loadAndPlay, 10_000);
+    loadAndPlay();
+
+    // ── rendering ────────────────────────────────────────────────────────────
+
+    function drawFrame(traj, upTo) {
+      const W = 800, H = 750;
+
+      // Water
+      ctx.fillStyle = '#1a3a5c';
+      ctx.fillRect(0, 0, W, H);
+
+      // Subtle grid
+      ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+      ctx.lineWidth = 1;
+      for (let y = 0; y < H; y += 45) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      }
+
+      // Wind arrows at top
+      ctx.strokeStyle = 'rgba(170,210,255,0.3)';
+      ctx.lineWidth = 1.5;
+      for (let x = 60; x < W - 40; x += 90) drawMiniArrow(x, 18);
+
+      // Course lines
+      drawCourseLine(250, 550, '#ff4444', 'START');   // start line
+      drawCourseLine(250,  80, '#ffcc00', 'FINISH');  // finish line
+
+      // Trajectory trace — colour shifts green → yellow as race progresses
+      const total = traj.length;
+      for (let i = 1; i <= upTo && i < total; i++) {
+        const t  = i / total;
+        ctx.strokeStyle = `rgba(${Math.round(60 + 195*t)}, ${Math.round(200 - 50*t)}, 80, 0.7)`;
+        ctx.lineWidth   = 1.8;
+        ctx.beginPath();
+        ctx.moveTo(traj[i-1].x, traj[i-1].y);
+        ctx.lineTo(traj[i].x,   traj[i].y);
+        ctx.stroke();
+      }
+
+      // Boat at current position
+      const pt = traj[Math.min(upTo, total - 1)];
+      if (pt) drawBoatDot(pt.x, pt.y);
+
+      // Episode counter overlay
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(8, 8, 200, 28);
+      ctx.fillStyle = '#aaccff';
+      ctx.font = '12px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`Episode ${data?.episode ?? '—'}`, 14, 27);
+    }
+
+    function drawCourseLine(halfX, y, color, label) {
+      const cx = 400;
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = 2;
+      ctx.setLineDash([6, 5]);
+      ctx.beginPath();
+      ctx.moveTo(cx - halfX, y); ctx.lineTo(cx + halfX, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Buoys
+      [cx - halfX, cx + halfX].forEach(bx => {
+        ctx.beginPath(); ctx.arc(bx, y, 7, 0, Math.PI*2);
+        ctx.fillStyle = color; ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke();
+      });
+
+      ctx.fillStyle = color;
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(label, cx + halfX + 10, y + 4);
+    }
+
+    function drawBoatDot(x, y) {
+      ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI*2);
+      ctx.fillStyle   = '#ddeeff'; ctx.fill();
+      ctx.strokeStyle = '#223344'; ctx.lineWidth = 1; ctx.stroke();
+    }
+
+    function drawMiniArrow(x, y) {
+      ctx.beginPath();
+      ctx.moveTo(x, y); ctx.lineTo(x, y + 14);
+      ctx.moveTo(x-4, y+8); ctx.lineTo(x, y+14); ctx.lineTo(x+4, y+8);
+      ctx.stroke();
+    }
+  </script>
+</body>
+</html>
