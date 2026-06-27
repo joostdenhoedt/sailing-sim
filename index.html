@@ -13,7 +13,7 @@
     import { getInitialState, step } from './js/physics.js';
     import { createControls } from './js/controls.js';
     import { createRenderer } from './js/renderer.js';
-    import { createRaceState, updateRace } from './js/game.js';
+    import { createRaceState, updateRace, CANVAS_W, CANVAS_H } from './js/game.js';
 
     const canvas   = document.getElementById('game');
     const renderer = createRenderer(canvas);
@@ -25,13 +25,23 @@
 
     function loop(timestamp) {
       if (!lastTime) lastTime = timestamp;
-      const dt = Math.min((timestamp - lastTime) / 1000, 0.05); // cap at 50ms
+      const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
       lastTime = timestamp;
 
-      const ctrl = controls.sample(dt);
-      boatState  = step(boatState, ctrl, dt);
-      raceState  = updateRace(raceState, boatState, dt);
+      // Stop advancing physics once the race is finished
+      if (raceState.phase !== 'finished') {
+        const ctrl = controls.sample(dt);
+        boatState  = step(boatState, ctrl, dt);
 
+        // Clamp boat to canvas so it can't sail off-screen during play
+        boatState = {
+          ...boatState,
+          x: Math.max(0, Math.min(CANVAS_W, boatState.x)),
+          y: Math.max(0, Math.min(CANVAS_H, boatState.y)),
+        };
+      }
+
+      raceState = updateRace(raceState, boatState, dt);
       renderer.draw(boatState, raceState);
       requestAnimationFrame(loop);
     }

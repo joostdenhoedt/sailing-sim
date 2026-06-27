@@ -105,19 +105,19 @@ class QAgent:
     def policy_summary(self):
         """
         One-line summary of the greedy policy for each TWA zone.
-        Great for seeing at a glance what the agent has learned.
+        Shows what the agent has learned about each point of sail.
         """
-        from env import N_SPEED, N_TRIM, N_TACK, TWA_ZONE_NAMES
-        print("\nGreedy policy by TWA zone (most-visited speed/trim combo):")
-        for tz in range(5):
-            # Find the most visited state in this TWA zone
-            base = tz * N_SPEED * N_TRIM * N_TACK
-            chunk = self.q[base: base + N_SPEED * N_TRIM * N_TACK]
-            visits = self.visit_counts[base: base + N_SPEED * N_TRIM * N_TACK]
+        from env import N_TWA, N_SPEED, N_TRIM, N_TACK, N_XZONE, TWA_ZONE_NAMES
+        stride = N_SPEED * N_TRIM * N_TACK * N_XZONE  # states per TWA zone
+        print("\nGreedy policy by TWA zone:")
+        for tz in range(N_TWA):
+            base   = tz * stride
+            chunk  = self.q[base: base + stride]
+            visits = self.visit_counts[base: base + stride]
             if visits.sum() == 0:
-                print(f"  {TWA_ZONE_NAMES[tz]:<10}: not yet visited")
+                print(f"  {TWA_ZONE_NAMES[tz]:<12}: not yet visited")
                 continue
-            best_local = int(np.argmax(chunk.max(axis=1)))
+            best_local  = int(np.argmax(chunk.max(axis=1)))
             best_action = ACTION_NAMES[int(np.argmax(chunk[best_local]))]
-            print(f"  {TWA_ZONE_NAMES[tz]:<10}: {best_action}  "
-                  f"(Q={chunk[best_local].max():.3f})")
+            print(f"  {TWA_ZONE_NAMES[tz]:<12}: {best_action:<12}  "
+                  f"Q={chunk[best_local].max():.3f}  visits={visits.sum()}")
